@@ -2,6 +2,7 @@ import json
 from functools import partial
 from itertools import tee
 from typing import Union
+from tqdm import tqdm
 
 import h5py
 import numpy as np
@@ -137,6 +138,8 @@ class SparkModel(object):
         on their data partition.
 
         :param rdd: RDD with features and labels
+        :param global_epochs: When using synchronous training, the number of epochs to
+            train the model in the driver
         :param epochs: number of epochs used for training
         :param batch_size: batch size used for training
         :param verbose: logging verbosity level (0, 1 or 2)
@@ -180,16 +183,23 @@ class SparkModel(object):
             print('>>> Async training complete.')
             new_parameters = self.client.get_parameters()
         elif self.mode == 'synchronous':
-            worker = SparkWorker(yaml, parameters, train_config,
-                                 optimizer, loss, metrics, custom)
-            training_outcomes = rdd.mapPartitions(worker.train).collect()
-            new_parameters = self._master_network.get_weights()
-            number_of_sub_models = len(training_outcomes)
-            for training_outcome in training_outcomes:
-                grad, history = training_outcome
-                self.training_histories.append(history)
-                weighted_grad = divide_by(grad, number_of_sub_models)
-                new_parameters = subtract_params(new_parameters, weighted_grad)
+            global_epochs = train_config.pop("global_epochs", 1)
+            for _ in tqdm(range(global_epochs)):
+
+                worker = SparkWorker(yaml, parameters, train_config,
+                                     optimizer, loss, metrics, custom)
+                training_outcomes = rdd.mapPartitions(worker.train).collect()
+                new_parameters = self._master_network.get_weights()
+                number_of_sub_models = len(training_outcomes)
+
+                for training_outcome in training_outcomes:
+                    grad, history = training_outcome
+                    self.training_histories.append(history)
+                    weighted_grad = divide_by(grad, number_of_sub_models)
+                    new_parameters = subtract_params(new_parameters, weighted_grad)
+
+                parameters = rdd.context.broadcast(new_parameters)
+                self._master_network.set_weights(new_parameters)
             print('>>> Synchronous training complete.')
         else:
             raise ValueError("Unsupported mode {}".format(self.mode))

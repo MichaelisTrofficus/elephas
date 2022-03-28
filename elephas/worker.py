@@ -1,5 +1,6 @@
 import numpy as np
 from itertools import tee
+import tensorflow as tf
 from tensorflow.keras.models import model_from_json
 from tensorflow.keras.optimizers import get as get_optimizer
 from tensorflow.python.keras.utils.generic_utils import slice_arrays
@@ -23,23 +24,32 @@ class SparkWorker(object):
         self.custom_objects = custom_objects
         self.model = None
 
+    @staticmethod
+    def _convert_to_callable(_gen):
+        def gen():
+            for x, y in _gen:
+                yield x, y
+        return gen
+
     def train(self, data_iterator):
         """Train a keras model on a worker
         """
-        history = None
         optimizer = get_optimizer(self.master_optimizer)
         self.model = model_from_json(self.yaml, self.custom_objects)
         self.model.compile(optimizer=optimizer,
                            loss=self.master_loss, metrics=self.master_metrics)
         self.model.set_weights(self.parameters.value)
 
-        feature_iterator, label_iterator = tee(data_iterator, 2)
-        x_train = np.asarray([x for x, y in feature_iterator])
-        y_train = np.asarray([y for x, y in label_iterator])
+        x_shape, y_shape = self.train_config["x_shape"], self.train_config["y_shape"]
+        tf_dataset = tf.data.Dataset.from_generator(self._convert_to_callable(data_iterator),
+                                                    output_shapes=(x_shape, y_shape),
+                                                    output_types=(tf.float64, tf.float64))
+        tf_dataset = tf_dataset.batch(self.train_config["batch_size"])\
 
+        # TODO: Use prefecth with AUTOTUNE in this version of tensorflow
         weights_before_training = self.model.get_weights()
-        if x_train.shape[0] > self.train_config.get('batch_size'):
-            history = self.model.fit(x_train, y_train, **self.train_config)
+
+        history = self.model.fit(tf_dataset)
         weights_after_training = self.model.get_weights()
         deltas = subtract_params(
             weights_before_training, weights_after_training)

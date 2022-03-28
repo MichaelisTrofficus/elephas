@@ -1,0 +1,7 @@
+-r requirements.txt
+
+pytest
+pytest-pep8
+pytest-cov
+pytest-spark
+mock

@@ -47,6 +47,8 @@ model.add(Activation('softmax'))
 sgd = SGD(lr=0.1)
 model.compile(sgd, 'categorical_crossentropy', ['acc'])
 
+print(model.get_weights()[1])
+
 # Build RDD from numpy features and labels
 rdd = to_simple_rdd(sc, x_train, y_train)
 
@@ -54,9 +56,10 @@ rdd = to_simple_rdd(sc, x_train, y_train)
 spark_model = SparkModel(model, mode='synchronous')
 
 # Train Spark model
-spark_model.fit(rdd, epochs=epochs, batch_size=batch_size, verbose=2, validation_split=0.1)
+spark_model.fit(rdd, global_epochs=1, epochs=epochs, batch_size=batch_size,
+                verbose=0, validation_split=0.1, x_shape=784, y_shape=10
+                )
 
 # Evaluate Spark model by evaluating the underlying model
-score = spark_model.evaluate(x_test, y_test, verbose=2)
+score = spark_model.evaluate(x_test, y_test, verbose=0)
 print('Test accuracy:', score[1])
-
